@@ -10,7 +10,7 @@ require (
 	github.com/google/go-github/v53 v53.2.0
 	github.com/gotd/td v0.131.0
 	github.com/u2takey/ffmpeg-go v0.5.0
-	github.com/wader/goutubedl v0.0.0-20240626070646-8cef76d0c092
+	github.com/wader/goutubedl v0.0.0-20250907120232-cd0702fcc0d6
 	golang.org/x/exp v0.0.0-20230725093048-515e97ebf090
 )
 
