@@ -13,9 +13,10 @@ import (
 )
 
 type paramsType struct {
-	ApiID    int
-	ApiHash  string
-	BotToken string
+	ApiID     int
+	ApiHash   string
+	BotToken  string
+	YtdlProxy string
 
 	AllowedUserIDs  []int64
 	AdminUserIDs    []int64
@@ -44,6 +45,7 @@ func (p *paramsType) Init() error {
 	flag.StringVar(&allowedGroupIDs, "allowed-group-ids", "", "allowed telegram group ids")
 	var maxSize string
 	flag.StringVar(&maxSize, "max-size", "", "allowed max size of video files")
+	flag.StringVar(&p.YtdlProxy, "ytdl-proxy", "", "Proxy URL for yt-dlp downloads (e.g. socks5://127.0.0.1:1080)")
 	flag.Parse()
 
 	var err error
@@ -70,6 +72,10 @@ func (p *paramsType) Init() error {
 	}
 	if p.BotToken == "" {
 		return fmt.Errorf("bot token not set")
+	}
+
+	if p.YtdlProxy == "" {
+		p.YtdlProxy = os.Getenv("YTDLP_PROXY")
 	}
 
 	if goutubedl.Path == "" {

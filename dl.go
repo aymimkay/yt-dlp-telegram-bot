@@ -28,6 +28,7 @@ func (l goYouTubeDLLogger) Print(v ...interface{}) {
 
 func (d *Downloader) downloadURL(dlCtx context.Context, url string) (rr *ReReadCloser, title string, err error) {
 	result, err := goutubedl.New(dlCtx, url, goutubedl.Options{
+		ProxyUrl: params.YtdlProxy,
 		Type:     goutubedl.TypeSingle,
 		DebugLog: goYouTubeDLLogger{},
 		// StderrFn:          func(cmd *exec.Cmd) io.Writer { return io.Writer(os.Stdout) },
