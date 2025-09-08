@@ -8,6 +8,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -v
 
 FROM python:alpine
 RUN apk update && apk upgrade && apk add --no-cache ffmpeg py3-pysocks
+RUN pip install --no-cache-dir pysocks requests[socks]
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 COPY --from=builder /app/yt-dlp-telegram-bot /app/yt-dlp-telegram-bot
