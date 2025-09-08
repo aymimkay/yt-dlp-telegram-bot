@@ -68,6 +68,9 @@ the app's log, as it logs all incoming messages.
 You can set a max. upload file size limit with the `-max-size` argument.
 Example: `-max-size 512MB`
 
+You can set a preferred resolution with the `-res` argument (defaults to 720p).
+Example: `-res 720`
+
 All command line arguments can be set through OS environment variables.
 Note that using a command line argument overwrites a setting by the environment
 variable. Available OS environment variables are:
@@ -81,6 +84,8 @@ variable. Available OS environment variables are:
 - `ALLOWED_GROUPIDS`
 - `MAX_SIZE`
 - `YTDLP_COOKIES`
+- `YTDLP_PROXY`
+- `RES`
 
 The contents of the `YTDLP_COOKIES` environment variable will be written to the
 file `/tmp/ytdlp-cookies.txt`. This will be used by `yt-dlp` if it is running

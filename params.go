@@ -23,6 +23,7 @@ type paramsType struct {
 	AllowedGroupIDs []int64
 
 	MaxSize int64
+	Res     string
 }
 
 var params paramsType
@@ -46,6 +47,7 @@ func (p *paramsType) Init() error {
 	var maxSize string
 	flag.StringVar(&maxSize, "max-size", "", "allowed max size of video files")
 	flag.StringVar(&p.YtdlProxy, "ytdl-proxy", "", "Proxy URL for yt-dlp downloads (e.g. socks5://127.0.0.1:1080)")
+	flag.StringVar(&p.Res, "res", "", "preferred resolution (e.g. 720, 1080)")
 	flag.Parse()
 
 	var err error
@@ -83,6 +85,13 @@ func (p *paramsType) Init() error {
 	}
 	if goutubedl.Path == "" {
 		goutubedl.Path = "yt-dlp"
+	}
+
+	if p.Res == "" {
+		p.Res = os.Getenv("RES")
+	}
+	if p.Res == "" {
+		p.Res = "720" // Default resolution
 	}
 
 	if allowedUserIDs == "" {
