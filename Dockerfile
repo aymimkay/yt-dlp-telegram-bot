@@ -1,5 +1,6 @@
-FROM golang:1.23.3 AS builder
+FROM golang:1.24 AS builder
 WORKDIR /app/
+ENV GOTOOLCHAIN=auto
 COPY go.mod go.sum /app/
 RUN go mod download
 COPY . .
@@ -13,5 +14,5 @@ COPY --from=builder /app/yt-dlp-telegram-bot /app/yt-dlp-telegram-bot
 COPY --from=builder /app/yt-dlp.conf /root/yt-dlp.conf
 
 ENTRYPOINT ["/entrypoint.sh"]
-cmd ["/app/yt-dlp-telegram-bot"]
+CMD ["/app/yt-dlp-telegram-bot"]
 ENV API_ID= API_HASH= BOT_TOKEN= ALLOWED_USERIDS= ADMIN_USERIDS= ALLOWED_GROUPIDS= YTDLP_COOKIES= YTDLP_PROXY=
