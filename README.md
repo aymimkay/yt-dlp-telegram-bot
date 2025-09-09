@@ -88,7 +88,7 @@ variable. Available OS environment variables are:
 - `RES`
 
 The contents of the `YTDLP_COOKIES` environment variable (base64) will be written
-to the file `/tmp/ytdlp-cookies.txt`. This will be used by `yt-dlp` if it is running
+to the file `/app/ytdlp-cookies.txt`. This will be used by `yt-dlp` if it is running
 in a docker container, as the `yt-dlp.conf` file in the container points to this
 cookie file.
 

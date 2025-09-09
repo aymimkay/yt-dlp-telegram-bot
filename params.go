@@ -165,7 +165,7 @@ func (p *paramsType) Init() error {
         	return fmt.Errorf("couldn't decode base64 cookies: %w", err)
     	}
 
-		cookiesPath, err := getCookiesFilePath("/root/yt-dlp.conf")
+		cookiesPath, err := getCookiesFilePath("/app/yt-dlp.conf")
     	if err != nil {
         	return fmt.Errorf("couldn't get cookies file path: %w", err)
     	}

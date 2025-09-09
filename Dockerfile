@@ -12,7 +12,7 @@ RUN pip install --no-cache-dir pysocks requests[socks]
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 COPY --from=builder /app/yt-dlp-telegram-bot /app/yt-dlp-telegram-bot
-COPY --from=builder /app/yt-dlp.conf /root/yt-dlp.conf
+COPY --from=builder /app/yt-dlp.conf /app/yt-dlp.conf
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/app/yt-dlp-telegram-bot"]
