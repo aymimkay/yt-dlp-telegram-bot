@@ -36,6 +36,7 @@ func (d *Downloader) downloadURL(dlCtx context.Context, url string) (rr *ReReadC
 		// StderrFn:          func(cmd *exec.Cmd) io.Writer { return io.Writer(os.Stdout) },
 		MergeOutputFormat: "mkv",     // This handles VP9 properly. yt-dlp uses mp4 by default, which doesn't.
 		SortingFormat:     sortingFormat,   // Use the dynamic resolution from params
+		Cookies:		   params.CookiesPath,
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("preparing download %q: %w", url, err)

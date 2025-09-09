@@ -24,6 +24,8 @@ type paramsType struct {
 
 	MaxSize int64
 	Res     string
+
+	CookiesPath string //not an actual launch param
 }
 
 var params paramsType
@@ -156,7 +158,13 @@ func (p *paramsType) Init() error {
 	// Writing env. var YTDLP_COOKIES contents to a file.
 	// In case a docker container is used, the yt-dlp.conf points yt-dlp to this cookie file.
 	if cookies := os.Getenv("YTDLP_COOKIES"); cookies != "" {
-		f, err := os.Create("/tmp/ytdlp-cookies.txt")
+		cookiesPath, err := getCookiesFilePath("/root/yt-dlp.conf")
+    	if err != nil {
+        	return fmt.Errorf("couldn't get cookies file path: %w", err)
+    	}
+		p.CookiesPath = cookiesPath
+		
+		f, err := os.Create(cookiesPath)
 		if err != nil {
 			return fmt.Errorf("couldn't create cookies file: %w", err)
 		}
@@ -168,4 +176,23 @@ func (p *paramsType) Init() error {
 	}
 
 	return nil
+}
+
+func getCookiesFilePath(confPath string) (string, error) {
+    data, err := os.ReadFile(confPath)
+    if err != nil {
+        return "", fmt.Errorf("could not read config: %w", err)
+    }
+
+    // Trim whitespace and split into lines
+    lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+    for _, line := range lines {
+        line = strings.TrimSpace(line)
+        if line != "" && !strings.HasPrefix(line, "#") && !strings.HasPrefix(line, "//") {
+            return line, nil // first non-empty line = path
+        }
+    }
+
+    // fallback if file empty
+    return "/tmp/ytdlp-cookies.txt", nil
 }
