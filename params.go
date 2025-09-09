@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"encoding/base64"
 
 	"github.com/dustin/go-humanize"
 	"github.com/wader/goutubedl"
@@ -158,6 +159,12 @@ func (p *paramsType) Init() error {
 	// Writing env. var YTDLP_COOKIES contents to a file.
 	// In case a docker container is used, the yt-dlp.conf points yt-dlp to this cookie file.
 	if cookies := os.Getenv("YTDLP_COOKIES"); cookies != "" {
+		// Decode the base64-encoded cookies
+    	decodedCookies, err := base64.StdEncoding.DecodeString(cookies)
+    	if err != nil {
+        	return fmt.Errorf("couldn't decode base64 cookies: %w", err)
+    	}
+
 		cookiesPath, err := getCookiesFilePath("/root/yt-dlp.conf")
     	if err != nil {
         	return fmt.Errorf("couldn't get cookies file path: %w", err)
@@ -168,7 +175,7 @@ func (p *paramsType) Init() error {
 		if err != nil {
 			return fmt.Errorf("couldn't create cookies file: %w", err)
 		}
-		_, err = f.WriteString(cookies)
+		_, err = f.Write(decodedCookies)
 		if err != nil {
 			return fmt.Errorf("couldn't write cookies file: %w", err)
 		}
