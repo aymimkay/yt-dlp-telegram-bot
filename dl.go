@@ -39,6 +39,8 @@ func (d *Downloader) downloadURL(dlCtx context.Context, url string) (rr *ReReadC
 		Cookies:		   params.CookiesPath,
 	})
 	if err != nil {
+		fmt.Printf("DEBUG: goutubedl.New() error: %+v\n", err)
+    	fmt.Printf("DEBUG: error type: %T\n", err)
 		return nil, "", fmt.Errorf("preparing download %q: %w", url, err)
 	}
 
