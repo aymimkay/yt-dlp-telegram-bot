@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"encoding/base64"
+	"path/filepath"
 
 	"github.com/dustin/go-humanize"
 	"github.com/wader/goutubedl"
@@ -26,7 +27,7 @@ type paramsType struct {
 	MaxSize int64
 	Res     string
 
-	CookiesPath string //not an actual launch param
+	CookiesPath string
 }
 
 var params paramsType
@@ -51,6 +52,7 @@ func (p *paramsType) Init() error {
 	flag.StringVar(&maxSize, "max-size", "", "allowed max size of video files")
 	flag.StringVar(&p.YtdlProxy, "ytdl-proxy", "", "Proxy URL for yt-dlp downloads (e.g. socks5://127.0.0.1:1080)")
 	flag.StringVar(&p.Res, "res", "", "preferred resolution (e.g. 720, 1080)")
+	flag.StringVar(&p.CookiesPath, "cookies", "", "cookies file path")
 	flag.Parse()
 
 	var err error
@@ -156,10 +158,28 @@ func (p *paramsType) Init() error {
 		p.MaxSize = b.Int64()
 	}
 
-	// Writing env. var YTDLP_COOKIES contents to a file.
-	// In case a docker container is used, the yt-dlp.conf points yt-dlp to this cookie file.
-	if cookies := os.Getenv("YTDLP_COOKIES"); cookies != "" {
-		// Decode the base64-encoded cookies
+	if p.CookiesPath != "" {
+		absPath, err := filepath.Abs(p.CookiesPath)
+    	if err != nil {
+        	return fmt.Errorf("invalid cookies path: %v", err)
+    	}
+    	p.CookiesPath = absPath
+
+    	info, err := os.Stat(p.CookiesPath)
+		if err != nil {
+        if os.IsNotExist(err) {
+            return fmt.Errorf("cookies file does not exist: %s", p.CookiesPath)
+        }
+        return fmt.Errorf("cannot access cookies file: %v", err)
+    }
+
+    if info.IsDir() {
+        return fmt.Errorf("cookies path is a directory, not a file: %s", p.CookiesPath)
+    	}
+	} else if cookies := os.Getenv("YTDLP_COOKIES"); cookies != "" {
+		// Writing env. var YTDLP_COOKIES contents to a file.
+		// In case a docker container is used, the yt-dlp.conf points yt-dlp to this cookie file.
+		// Decode the base64-encoded cookies first
     	decodedCookies, err := base64.StdEncoding.DecodeString(cookies)
     	if err != nil {
         	return fmt.Errorf("couldn't decode base64 cookies: %w", err)
