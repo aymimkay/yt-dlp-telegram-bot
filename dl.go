@@ -52,10 +52,10 @@ func (d *Downloader) downloadURL(dlCtx context.Context, url string) (rr *ReReadC
 	return NewReReadCloser(dlResult), result.Info.Title, nil
 }
 
-func (d *Downloader) DownloadAndConvertURL(ctx context.Context, url, format string) (r io.ReadCloser, outputFormat, title string, err error) {
+func (d *Downloader) DownloadAndConvertURL(ctx context.Context, url, format string) (r io.ReadCloser, outputFormat, title string, videoMetadata *VideoMetadata, err error) {
 	rr, title, err := d.downloadURL(ctx, url)
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", "", nil, err
 	}
 
 	conv := Converter{
@@ -64,7 +64,7 @@ func (d *Downloader) DownloadAndConvertURL(ctx context.Context, url, format stri
 	}
 
 	if err := conv.Probe(rr); err != nil {
-		return nil, "", "", err
+		return nil, "", "", nil, err
 	}
 
 	if d.ConvertStartFunc != nil {
@@ -73,8 +73,8 @@ func (d *Downloader) DownloadAndConvertURL(ctx context.Context, url, format stri
 
 	r, outputFormat, err = conv.ConvertIfNeeded(ctx, rr)
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", "", nil, err
 	}
 
-	return r, outputFormat, title, nil
+	return r, outputFormat, title, conv.VideoMetadata, nil
 }

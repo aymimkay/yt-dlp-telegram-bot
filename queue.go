@@ -13,25 +13,28 @@ import (
 const processStartStr = "🔍 Getting information..."
 const processStr = "🔨 Processing"
 const uploadStr = "☁️ Uploading"
-const uploadDoneStr = "🏁 Uploading"
 const errorStr = "❌ Error"
 const canceledStr = "❌ Canceled"
 
 const maxProgressPercentUpdateInterval = time.Second
+const maxProgressPercentUpdateIntervalGroup = 5 * time.Second // Slower updates for groups/channels
 const progressBarLength = 10
+const minProgressPercentChange = 10 // Only update every 10% for groups/channels
 
 type DownloadQueueEntry struct {
 	URL    string
 	Format string
 
-	OrigEntities  tg.Entities
-	OrigMsgUpdate *tg.UpdateNewMessage
-	OrigMsg       *tg.Message
-	FromUser      *tg.PeerUser
-	FromGroup     *tg.PeerChat
+	OrigEntities         tg.Entities
+	OrigMsgUpdate        *tg.UpdateNewMessage
+	OrigChannelMsgUpdate *tg.UpdateNewChannelMessage
+	OrigMsg              *tg.Message
+	FromUser             *tg.PeerUser
+	FromGroup            *tg.PeerChat
 
-	Reply    *message.Builder
-	ReplyMsg *tg.UpdateShortSentMessage
+	Reply         *message.Builder
+	ReplyMsg      *tg.UpdateShortSentMessage
+	ProgressMsgID int // ID of our progress message (to be deleted later)
 
 	Ctx       context.Context
 	CtxCancel context.CancelFunc
@@ -60,6 +63,25 @@ func (e *DownloadQueueEntry) sendTypingCancelAction(ctx context.Context) {
 func (e *DownloadQueueEntry) editReply(ctx context.Context, s string) {
 	_, _ = e.Reply.Edit(e.ReplyMsg.ID).Text(ctx, s)
 	e.sendTypingAction(ctx)
+}
+
+func (e *DownloadQueueEntry) editReplyWithAutoDelete(ctx context.Context, qEntry *DownloadQueueEntry, s string, deleteAfter time.Duration) {
+	e.editReply(ctx, s)
+	if deleteAfter > 0 {
+		go func() {
+			time.Sleep(deleteAfter)
+			// Try to delete the message after the specified duration
+			e.editReply(ctx, "🗑️ Message deleted")
+			time.Sleep(1 * time.Second)
+			_, err := telegramSender.Self().Revoke().Messages(ctx, qEntry.ProgressMsgID)
+			if err != nil {
+				fmt.Println("  error deleting progress message:", err)
+			} else {
+				fmt.Println("  progress message deleted successfully!")
+			}
+
+		}()
+	}
 }
 
 type currentlyDownloadedEntryType struct {
@@ -111,7 +133,86 @@ func (q *DownloadQueue) Add(ctx context.Context, entities tg.Entities, u *tg.Upd
 	replyText, _ := newEntry.Reply.Text(ctx, replyStr)
 	newEntry.ReplyMsg = replyText.(*tg.UpdateShortSentMessage)
 
+	// Store the ID of our progress message for later deletion
+	newEntry.ProgressMsgID = newEntry.ReplyMsg.ID
+
 	newEntry.FromUser, newEntry.FromGroup = resolveMsgSrc(newEntry.OrigMsg)
+
+	q.entries = append(q.entries, newEntry)
+	q.mutex.Unlock()
+
+	select {
+	case q.processReqChan <- true:
+	default:
+	}
+}
+
+func (q *DownloadQueue) AddFromContext(ctx context.Context, msgCtx *MessageContext, url, format string) {
+	q.mutex.Lock()
+
+	var replyStr string
+	if len(q.entries) == 0 {
+		replyStr = processStartStr
+	} else {
+		fmt.Println("  queueing request at position #", len(q.entries))
+		replyStr = q.getQueuePositionString(len(q.entries))
+	}
+
+	// Create a mock message for compatibility with existing queue structure
+	mockMsg := &tg.Message{
+		Message: msgCtx.MessageText,
+		Out:     msgCtx.IsOutgoing,
+	}
+
+	newEntry := DownloadQueueEntry{
+		URL:                  url,
+		Format:               format,
+		OrigEntities:         msgCtx.Entities,
+		OrigMsgUpdate:        msgCtx.OrigMsgUpdate,
+		OrigChannelMsgUpdate: msgCtx.OrigChannelMsgUpdate,
+		OrigMsg:              mockMsg,
+	}
+
+	// Set up user/group info
+	newEntry.FromUser = &tg.PeerUser{UserID: msgCtx.FromUserID}
+	if msgCtx.FromGroupID != nil {
+		newEntry.FromGroup = &tg.PeerChat{ChatID: -*msgCtx.FromGroupID}
+	}
+
+	newEntry.Reply = msgCtx.ReplyBuilder()
+	replyText, _ := newEntry.Reply.Text(ctx, replyStr)
+
+	// Handle different response types for regular vs channel messages
+	switch reply := replyText.(type) {
+	case *tg.UpdateShortSentMessage:
+		// Regular message response
+		newEntry.ReplyMsg = reply
+		newEntry.ProgressMsgID = reply.ID
+	case *tg.Updates:
+		// Channel message response - extract the message from updates
+		for _, update := range reply.Updates {
+			if msgUpdate, ok := update.(*tg.UpdateNewChannelMessage); ok {
+				if sentMsg, ok := msgUpdate.Message.(*tg.Message); ok {
+					// Create a compatible UpdateShortSentMessage structure
+					newEntry.ReplyMsg = &tg.UpdateShortSentMessage{
+						ID:   sentMsg.ID,
+						Date: sentMsg.Date,
+					}
+					newEntry.ProgressMsgID = sentMsg.ID
+					break
+				}
+			}
+		}
+		// Fallback if we couldn't find the message in updates
+		if newEntry.ReplyMsg == nil {
+			newEntry.ReplyMsg = &tg.UpdateShortSentMessage{ID: 0, Date: 0}
+			newEntry.ProgressMsgID = 0
+		}
+	default:
+		// Fallback for any other response type
+		newEntry.ReplyMsg = &tg.UpdateShortSentMessage{ID: 0, Date: 0}
+		newEntry.ProgressMsgID = 0
+	}
 
 	q.entries = append(q.entries, newEntry)
 	q.mutex.Unlock()
@@ -130,6 +231,18 @@ func (q *DownloadQueue) CancelCurrentEntry(ctx context.Context, entities tg.Enti
 	} else {
 		fmt.Println("  no active request to cancel")
 		_, _ = telegramSender.Reply(entities, u).Text(ctx, errorStr+": no active request to cancel")
+	}
+	q.mutex.Unlock()
+}
+
+func (q *DownloadQueue) CancelCurrentEntryFromContext(ctx context.Context, msgCtx *MessageContext, url string) {
+	q.mutex.Lock()
+	if len(q.entries) > 0 {
+		q.entries[0].Canceled = true
+		q.entries[0].CtxCancel()
+	} else {
+		fmt.Println("  no active request to cancel")
+		_, _ = msgCtx.ReplyBuilder().Text(ctx, errorStr+": no active request to cancel")
 	}
 	q.mutex.Unlock()
 }
@@ -155,6 +268,27 @@ func (q *DownloadQueue) HandleProgressPercentUpdate(progressStr string, progress
 	if q.currentlyDownloadedEntry.disableProgressPercentUpdate || q.currentlyDownloadedEntry.lastProgressPercent == progressPercent {
 		return
 	}
+
+	// Critical updates (100% progress) bypass all rate limiting
+	isCriticalUpdate := progressPercent == 100
+	if isCriticalUpdate {
+		q.updateProgress(q.ctx, &q.entries[0], progressStr, progressPercent)
+		return
+	}
+
+	// Check if this is a group/channel message to apply different rate limiting
+	isGroupMessage := len(q.entries) > 0 && q.entries[0].FromGroup != nil
+
+	// For groups/channels, only update on significant progress changes
+	if isGroupMessage {
+		progressDiff := progressPercent - q.currentlyDownloadedEntry.lastDisplayedProgressPercent
+		if progressDiff < minProgressPercentChange && progressPercent < 100 && progressPercent > 0 {
+			// Skip this update - not enough progress change for group messages
+			q.currentlyDownloadedEntry.lastProgressPercent = progressPercent
+			return
+		}
+	}
+
 	q.currentlyDownloadedEntry.lastProgressPercent = progressPercent
 	if progressPercent < 0 {
 		q.currentlyDownloadedEntry.disableProgressPercentUpdate = true
@@ -170,9 +304,15 @@ func (q *DownloadQueue) HandleProgressPercentUpdate(progressStr string, progress
 		}
 	}
 
+	// Use different update intervals for groups vs direct messages
+	updateInterval := maxProgressPercentUpdateInterval
+	if isGroupMessage {
+		updateInterval = maxProgressPercentUpdateIntervalGroup
+	}
+
 	timeElapsedSinceLastUpdate := time.Since(q.currentlyDownloadedEntry.lastProgressPercentUpdateAt)
-	if timeElapsedSinceLastUpdate < maxProgressPercentUpdateInterval {
-		q.currentlyDownloadedEntry.progressUpdateTimer = time.AfterFunc(maxProgressPercentUpdateInterval-timeElapsedSinceLastUpdate, func() {
+	if timeElapsedSinceLastUpdate < updateInterval {
+		q.currentlyDownloadedEntry.progressUpdateTimer = time.AfterFunc(updateInterval-timeElapsedSinceLastUpdate, func() {
 			q.currentlyDownloadedEntry.progressPercentUpdateMutex.Lock()
 			if !q.currentlyDownloadedEntry.disableProgressPercentUpdate {
 				q.updateProgress(q.ctx, &q.entries[0], progressStr, progressPercent)
@@ -217,13 +357,14 @@ func (q *DownloadQueue) processQueueEntry(ctx context.Context, qEntry *DownloadQ
 		UpdateProgressPercentFunc: q.HandleProgressPercentUpdate,
 	}
 
-	r, outputFormat, title, err := downloader.DownloadAndConvertURL(qEntry.Ctx, qEntry.OrigMsg.Message, qEntry.Format)
+	r, outputFormat, title, videoMetadata, err := downloader.DownloadAndConvertURL(qEntry.Ctx, qEntry.OrigMsg.Message, qEntry.Format)
 	if err != nil {
 		fmt.Println("  error downloading:", err)
 		q.currentlyDownloadedEntry.progressPercentUpdateMutex.Lock()
 		q.currentlyDownloadedEntry.disableProgressPercentUpdate = true
 		q.currentlyDownloadedEntry.progressPercentUpdateMutex.Unlock()
-		qEntry.editReply(ctx, fmt.Sprint(errorStr+": ", err))
+		// Show error and auto-delete after 10 seconds
+		qEntry.editReplyWithAutoDelete(ctx, qEntry, fmt.Sprint(errorStr+": ", err), 10*time.Second)
 		return
 	}
 
@@ -233,14 +374,15 @@ func (q *DownloadQueue) processQueueEntry(ctx context.Context, qEntry *DownloadQ
 	q.updateProgress(ctx, qEntry, processStr, q.currentlyDownloadedEntry.lastProgressPercent)
 	q.currentlyDownloadedEntry.progressPercentUpdateMutex.Unlock()
 
-	err = dlUploader.UploadFile(qEntry.Ctx, qEntry.OrigEntities, qEntry.OrigMsgUpdate, r, outputFormat, title)
+	err = dlUploader.UploadFileFromEntry(qEntry.Ctx, qEntry, r, outputFormat, title, videoMetadata)
 	if err != nil {
 		fmt.Println("  error processing:", err)
 		q.currentlyDownloadedEntry.progressPercentUpdateMutex.Lock()
 		q.currentlyDownloadedEntry.disableProgressPercentUpdate = true
 		q.currentlyDownloadedEntry.progressPercentUpdateMutex.Unlock()
 		r.Close()
-		qEntry.editReply(ctx, fmt.Sprint(errorStr+": ", err))
+		// Show error and auto-delete after 10 seconds
+		qEntry.editReplyWithAutoDelete(ctx, qEntry, fmt.Sprint(errorStr+": ", err), 10*time.Second)
 		return
 	}
 	q.currentlyDownloadedEntry.progressPercentUpdateMutex.Lock()
@@ -251,10 +393,37 @@ func (q *DownloadQueue) processQueueEntry(ctx context.Context, qEntry *DownloadQ
 	q.currentlyDownloadedEntry.progressPercentUpdateMutex.Lock()
 	if qEntry.Canceled {
 		fmt.Print("  canceled\n")
-		q.updateProgress(ctx, qEntry, canceledStr, q.currentlyDownloadedEntry.lastProgressPercent)
-	} else if q.currentlyDownloadedEntry.lastDisplayedProgressPercent < 100 {
-		fmt.Print("  progress: 100%\n")
-		q.updateProgress(ctx, qEntry, uploadDoneStr, 100)
+		// Show canceled message and auto-delete after 5 seconds
+		qEntry.editReplyWithAutoDelete(ctx, qEntry, fmt.Sprint(canceledStr, " by user"), 5*time.Second)
+	} else {
+		fmt.Print("  success!\n")
+
+		// Simple success message - just edit directly
+		qEntry.editReply(ctx, "✅ Upload complete!")
+
+		// Wait a moment then properly delete the progress message
+		go func() {
+			time.Sleep(3 * time.Second)
+			fmt.Printf("  deleting progress message ID: %d\n", qEntry.ProgressMsgID)
+
+			var err error
+			if qEntry.FromGroup != nil {
+				// Group message - need peer context for deletion
+				fmt.Printf("  deleting from group chat ID: %d\n", qEntry.FromGroup.ChatID)
+				peer := &tg.InputPeerChat{ChatID: qEntry.FromGroup.ChatID}
+				_, err = telegramSender.To(peer).Revoke().Messages(ctx, qEntry.ProgressMsgID)
+			} else {
+				// DM - use Self() for private chats
+				fmt.Println("  deleting from private chat")
+				_, err = telegramSender.Self().Revoke().Messages(ctx, qEntry.ProgressMsgID)
+			}
+
+			if err != nil {
+				fmt.Println("  error deleting progress message:", err)
+			} else {
+				fmt.Println("  progress message deleted successfully!")
+			}
+		}()
 	}
 	q.currentlyDownloadedEntry.progressPercentUpdateMutex.Unlock()
 	qEntry.sendTypingCancelAction(ctx)
